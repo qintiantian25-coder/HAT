@@ -233,6 +233,7 @@ class RealHATGANModel(SRGANModel):
             l_g_total.backward()
             self.optimizer_g.step()
 
+            pass
         # optimize net_d
         for p in self.net_d.parameters():
             p.requires_grad = True

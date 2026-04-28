@@ -92,7 +92,7 @@ val:
 
 logger:
   print_freq: 100
-  save_checkpoint_freq: -1    # 只保留 best_model.pt
+  save_checkpoint_freq: 0    # 只保留 best_model.pt
   use_tb_logger: true
   wandb:
     project: ~

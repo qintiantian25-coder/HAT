@@ -2,11 +2,24 @@ import math
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
-
 from basicsr.utils.registry import ARCH_REGISTRY
-from basicsr.archs.arch_util import to_2tuple, trunc_normal_
-
 from einops import rearrange
+# 手动定义缺失的工具函数
+def to_2tuple(x):
+    return (x, x) if isinstance(x, int) else tuple(x)
+
+def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
+    def norm_cdf(x):
+        return (1. + math.erf(x / math.sqrt(2.))) / 2.
+    with torch.no_grad():
+        l = norm_cdf((a - mean) / std)
+        u = norm_cdf((b - mean) / std)
+        tensor.uniform_(2 * l - 1, 2 * u - 1)
+        tensor.erfinv_()
+        tensor.mul_(std * math.sqrt(2.))
+        tensor.add_(mean)
+        tensor.clamp_(min=a, max=b)
+        return tensor
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
@@ -524,14 +537,24 @@ class AttenBlocks(nn.Module):
             self.downsample = None
 
     def forward(self, x, x_size, params):
-        for blk in self.blocks:
+     for blk in self.blocks:
+        if self.use_checkpoint:
+            if self.training:
+                print("✅ Using checkpoint for HAB block")
+            x = checkpoint.checkpoint(blk, x, x_size, params['rpi_sa'], params['attn_mask'], use_reentrant=False)
+        else:
             x = blk(x, x_size, params['rpi_sa'], params['attn_mask'])
 
+     if self.use_checkpoint:
+        if self.training:
+            print("✅ Using checkpoint for OCAB")
+        x = checkpoint.checkpoint(self.overlap_attn, x, x_size, params['rpi_oca'], use_reentrant=False)
+     else:
         x = self.overlap_attn(x, x_size, params['rpi_oca'])
 
-        if self.downsample is not None:
-            x = self.downsample(x)
-        return x
+     if self.downsample is not None:
+        x = self.downsample(x)
+     return x
 
 
 class RHAG(nn.Module):
@@ -867,6 +890,11 @@ class HAT(nn.Module):
                 nn.Conv2d(embed_dim, num_feat, 3, 1, 1), nn.LeakyReLU(inplace=True))
             self.upsample = Upsample(upscale, num_feat)
             self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+        else:
+            # when no explicit upsampler is used, provide a small reconstruction
+            # conv to map deep features back to output channels so outputs
+            # depend on model parameters and shapes match input.
+            self.conv_reconstruct = nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1)
 
         self.apply(self._init_weights)
 
@@ -972,12 +1000,18 @@ class HAT(nn.Module):
         self.mean = self.mean.type_as(x)
         x = (x - self.mean) * self.img_range
 
+        # Always perform shallow + deep feature extraction so the output depends
+        # on model parameters and gradients can flow.
+        x = self.conv_first(x)
+        x = self.conv_after_body(self.forward_features(x)) + x
+
+        # If upsampling is configured, apply upsampling modules.
         if self.upsampler == 'pixelshuffle':
-            # for classical SR
-            x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x)) + x
             x = self.conv_before_upsample(x)
             x = self.conv_last(self.upsample(x))
+        else:
+            # map deep features back to output channels
+            x = self.conv_reconstruct(x)
 
         x = x / self.img_range + self.mean
 

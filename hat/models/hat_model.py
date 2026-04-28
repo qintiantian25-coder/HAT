@@ -9,6 +9,8 @@ from basicsr.utils import imwrite, tensor2img
 import math
 from tqdm import tqdm
 from os import path as osp
+import json
+import time
 
 @MODEL_REGISTRY.register()
 class HATModel(SRModel):
@@ -183,3 +185,68 @@ class HATModel(SRModel):
                 self._update_best_metric_result(dataset_name, metric, self.metric_results[metric], current_iter)
 
             self._log_validation_metric_values(current_iter, dataset_name, tb_logger)
+
+    def _update_best_metric_result(self, dataset_name, metric, value, current_iter):
+        """Override to save a single best model file when `psnr` improves.
+
+        Saves `best_model.pt` (model state_dict) under
+        `<experiments_root>/<exp_name>/models/best_model.pt` and writes
+        a small `best_model_meta.json` with psnr and iteration.
+        This runs alongside the base implementation.
+        """
+        # call parent implementation if available
+        try:
+            super(HATModel, self)._update_best_metric_result(dataset_name, metric, value, current_iter)
+        except Exception:
+            pass
+
+        if metric is None:
+            return
+        if str(metric).lower() != 'psnr':
+            return
+
+        # determine experiments root and model save dir
+        path_cfg = self.opt.get('path', {}) if isinstance(self.opt.get('path', {}), dict) else self.opt.get('path', {})
+        exp_root = None
+        if isinstance(path_cfg, dict):
+            exp_root = path_cfg.get('experiments_root') or path_cfg.get('root')
+        if not exp_root:
+            exp_root = osp.join(os.getcwd(), 'experiments')
+        exp_name = self.opt.get('name', 'experiment')
+        models_dir = osp.join(exp_root, exp_name, 'models')
+        try:
+            os.makedirs(models_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        meta_file = osp.join(models_dir, 'best_model_meta.json')
+        prev_best = -1e9
+        if osp.exists(meta_file):
+            try:
+                with open(meta_file, 'r', encoding='utf-8') as f:
+                    j = json.load(f)
+                    prev_best = float(j.get('best_psnr', prev_best))
+            except Exception:
+                prev_best = -1e9
+
+        if value is None:
+            return
+        try:
+            cur = float(value)
+        except Exception:
+            return
+
+        if cur > prev_best:
+            # prefer EMA model if available
+            net = getattr(self, 'net_g_ema', None) or getattr(self, 'net_g', None)
+            if net is None:
+                return
+            save_path = osp.join(models_dir, 'best_model.pt')
+            try:
+                torch.save(net.state_dict(), save_path)
+                meta = {'best_psnr': cur, 'iter': int(current_iter), 'time': time.time()}
+                with open(meta_file, 'w', encoding='utf-8') as f:
+                    json.dump(meta, f)
+                print(f'===> Best model updated: {save_path} (psnr={cur:.6f})')
+            except Exception as e:
+                print('Failed to save best model:', e)

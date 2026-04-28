@@ -75,7 +75,7 @@ train:
     milestones: [125000, 200000, 225000, 240000]
     gamma: 0.5
 
-  total_iter: 250000
+  total_iter: 40800
   warmup_iter: -1  # no warm up
 
   # losses
@@ -86,7 +86,8 @@ train:
 
 # validation settings
 val:
-  val_freq: !!float 5e3
+  # validate every ~5 epochs (102 it/epoch -> 102*5=510 it)
+  val_freq: 510
   save_img: false
   pbar: False
 
@@ -105,7 +106,8 @@ val:
 # logging settings
 logger:
   print_freq: 100
-  save_checkpoint_freq: !!float 5e3
+  # save checkpoint every ~5 epochs
+  save_checkpoint_freq: 510
   use_tb_logger: true
   wandb:
     project: ~

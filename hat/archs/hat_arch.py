@@ -539,18 +539,14 @@ class AttenBlocks(nn.Module):
     def forward(self, x, x_size, params):
      for blk in self.blocks:
         if self.use_checkpoint:
-            if self.training:
-                print("✅ Using checkpoint for HAB block")
             x = checkpoint.checkpoint(blk, x, x_size, params['rpi_sa'], params['attn_mask'], use_reentrant=False)
         else:
             x = blk(x, x_size, params['rpi_sa'], params['attn_mask'])
 
-     if self.use_checkpoint:
-        if self.training:
-            print("✅ Using checkpoint for OCAB")
-        x = checkpoint.checkpoint(self.overlap_attn, x, x_size, params['rpi_oca'], use_reentrant=False)
-     else:
-        x = self.overlap_attn(x, x_size, params['rpi_oca'])
+      if self.use_checkpoint:
+          x = checkpoint.checkpoint(self.overlap_attn, x, x_size, params['rpi_oca'], use_reentrant=False)
+      else:
+          x = self.overlap_attn(x, x_size, params['rpi_oca'])
 
      if self.downsample is not None:
         x = self.downsample(x)

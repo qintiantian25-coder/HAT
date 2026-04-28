@@ -1,4 +1,4 @@
-name: train_HAT_blind_SRx4
+name: train_HAT_blind
 model_type: HATModel
 scale: 1
 num_gpu: 1                         # 改为单卡
@@ -53,6 +53,8 @@ path:
   param_key_g: params_ema
   strict_load_g: false
   resume_state: ~
+  # set experiments root so best_model.pt is saved to the requested location
+  experiments_root: /home/student_server/Qtt/HAT/experiments
 
 train:
   gradient_accumulation_steps: 1   # 既然 batch_size=2，可以不再累积，保持等效总batch=2

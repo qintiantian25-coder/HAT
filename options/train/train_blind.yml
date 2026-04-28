@@ -23,7 +23,9 @@ datasets:
     use_shuffle: true
     num_worker_per_gpu: 6
     batch_size_per_gpu: 4
-    dataset_enlarge_ratio: 1
+    # For small datasets, enlarge ratio helps provide more iterations
+    # by repeating/reshuffling samples with augmentations.
+    dataset_enlarge_ratio: 100
     prefetch_mode: ~
 
   val_1:

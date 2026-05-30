@@ -238,6 +238,15 @@ def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
 
 
+def extract_image_id(filename):
+    """从输出文件名中提取数字ID，例如 '113_test_HAT_blind_restoration.png' -> '113.png'"""
+    # 匹配开头的数字
+    match = re.match(r'^(\d+)', filename)
+    if match:
+        return match.group(1) + '.png'
+    return filename
+
+
 def load_blind_coords(csv_path):
     if not os.path.exists(csv_path):
         return None
@@ -275,7 +284,6 @@ def calc_psnr(gt, out):
 def calc_ssim(gt, out):
     if compare_ssim is None:
         raise RuntimeError('skimage is required for SSIM. pip install scikit-image')
-    # skimage expects images in 2D for grayscale
     s = compare_ssim(gt, out, data_range=255)
     return float(s)
 
@@ -328,10 +336,16 @@ def main():
     per_image_logs = []
 
     print(f"===> 开始定量打分，准备比对 {len(out_imgs)} 张图片...")
+    
+    matched_count = 0
     for img_name in out_imgs:
         out_path = osp.join(output_dir, img_name)
-        gt_path = gt_map.get(img_name)
+        # 提取数字ID用于匹配GT
+        gt_key = extract_image_id(img_name)
+        gt_path = gt_map.get(gt_key)
+        
         if gt_path and os.path.exists(out_path):
+            matched_count += 1
             out_img = cv2.imread(out_path, cv2.IMREAD_GRAYSCALE)
             gt_img = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
             if gt_img is not None and out_img is not None:
@@ -349,6 +363,7 @@ def main():
 
                 row = {
                     'image': img_name,
+                    'gt_image': gt_key,
                     'psnr': full_psnr,
                     'ssim': full_ssim,
                     'blind_mae': None,
@@ -381,7 +396,7 @@ def main():
                         blind_pix_sum += int(len(err))
 
                         # input image (blur)
-                        in_path = input_map.get(img_name)
+                        in_path = input_map.get(gt_key)
                         in_mae = None
                         if in_path and os.path.exists(in_path):
                             in_img = cv2.imread(in_path, cv2.IMREAD_GRAYSCALE)
@@ -409,13 +424,15 @@ def main():
 
                 per_image_logs.append(row)
 
+    print(f"匹配成功: {matched_count} / {len(out_imgs)} 张图片")
+
     # save per-image CSV
     save_blind_dir = osp.join(save_dir, 'blind_eval')
     os.makedirs(save_blind_dir, exist_ok=True)
     save_blind_csv = osp.join(save_blind_dir, 'test_blind_metrics.csv')
     if len(per_image_logs) > 0:
         keys = [
-            'image', 'psnr', 'ssim',
+            'image', 'gt_image', 'psnr', 'ssim',
             'blind_mae', 'blind_rmse', 'blind_psnr',
             'blind_mae_input', 'blind_mae_gain_abs', 'blind_mae_gain_pct', 'blind_count'
         ]

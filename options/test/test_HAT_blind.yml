@@ -1,0 +1,56 @@
+name: test_HAT_blind_restoration
+model_type: HATModel
+scale: 1
+num_gpu: 1
+manual_seed: 0
+
+datasets:
+  test_1:
+    name: BlindTest
+    type: PairedImageDataset
+    dataroot_gt: /home/student_server/Qtt/NAFNet/data/test_sharp
+    dataroot_lq: /home/student_server/Qtt/NAFNet/data/test_blur
+    io_backend:
+      type: disk
+
+network_g:
+  type: HAT
+  upscale: 1
+  in_chans: 3
+  img_size: 64
+  window_size: 16
+  compress_ratio: 3
+  squeeze_factor: 30
+  conv_scale: 0.01
+  overlap_ratio: 0.5
+  img_range: 1.
+  depths: [6, 6, 6, 6, 6, 6]
+  embed_dim: 180
+  num_heads: [6, 6, 6, 6, 6, 6]
+  mlp_ratio: 2
+  upsampler: ''
+  resi_connection: '1conv'
+  use_checkpoint: false
+
+path:
+  pretrain_network_g: /home/student_server/Qtt/HAT/experiments/train_HAT_blind_restoration/train_HAT_blind_restoration/models/best_model.pt
+  strict_load_g: false
+  param_key_g: null
+
+val:
+  suffix: ''               # 添加这一行，解决 KeyError
+  save_img: true
+  pbar: true
+  metrics:
+    psnr:
+      type: calculate_psnr
+      crop_border: 0
+      test_y_channel: true
+    ssim:
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: true
+
+logger:
+  print_freq: 100
+  use_tb_logger: false

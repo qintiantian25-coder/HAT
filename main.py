@@ -110,6 +110,7 @@ def build_common(cfg):
     paths = get_section(cfg, 'paths')
     train_sec = get_section(cfg, 'train')
     test_sec = get_section(cfg, 'test')
+    logger_sec = get_section(cfg, 'logger')
 
     dataset_root = common.get('dataset_root', '/home/student_server/Qtt/NAFNet/data_new')
     exp_root = common.get('experiments_root', './experiments')
@@ -157,6 +158,7 @@ def build_common(cfg):
         'gamma': as_float(train_sec.get('gamma'), 0.5),
         'val_freq_epochs': as_int(common.get('val_freq_epochs') or train_sec.get('val_freq_epochs'), 20),
         'val_freq_raw': as_int(train_sec.get('val_freq'), 5000),
+        'save_checkpoint_freq': as_int(logger_sec.get('save_checkpoint_freq'), as_int(train_sec.get('save_checkpoint_freq'), 0)),
         'pretrain_network_g': common.get('pretrain_network_g', ''),
     }
 
@@ -269,7 +271,7 @@ def build_train_options(c):
         },
         'logger': {
             'print_freq': 100,
-            'save_checkpoint_freq': 0,
+            'save_checkpoint_freq': max(c['total_iter'] + 1, int(c['save_checkpoint_freq']) if c['save_checkpoint_freq'] > 0 else 0),
             'use_tb_logger': True,
             'wandb': {'project': None, 'resume_id': None},
             'training_log_file': str(Path(c['experiments_root']) / 'logs' / 'training.txt'),

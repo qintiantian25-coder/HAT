@@ -39,6 +39,15 @@ def _resolve_validation_log_file(opt):
 @MODEL_REGISTRY.register()
 class HATModel(SRModel):
 
+    def save(self, epoch, current_iter):
+        return
+
+    def save_network(self, net, net_label, current_iter, param_key='params'):
+        return
+
+    def save_training_state(self, epoch, current_iter):
+        return
+
     def pre_process(self):
         # pad to multiplication of window_size
         window_size = self.opt['network_g']['window_size']
@@ -244,17 +253,8 @@ class HATModel(SRModel):
             return
 
         # determine experiments root and model save dir
-        path_cfg = self.opt.get('path', {}) if isinstance(self.opt.get('path', {}), dict) else self.opt.get('path', {})
-        exp_root = None
-        if isinstance(path_cfg, dict):
-            exp_root = path_cfg.get('experiments_root') or path_cfg.get('root')
-        if not exp_root:
-            exp_root = osp.join(os.getcwd(), 'experiments')
-        models_dir = None
-        if isinstance(path_cfg, dict):
-            models_dir = path_cfg.get('models')
-        if not models_dir:
-            models_dir = osp.join(exp_root, 'models')
+        root_path = self.opt.get('root_path') or os.getcwd()
+        models_dir = osp.join(root_path, 'experiments', 'models')
         try:
             os.makedirs(models_dir, exist_ok=True)
         except Exception:

@@ -271,7 +271,8 @@ def build_train_options(c):
         },
         'logger': {
             'print_freq': 100,
-            'save_checkpoint_freq': max(c['total_iter'] + 1, int(c['save_checkpoint_freq']) if c['save_checkpoint_freq'] > 0 else 0),
+            # 已修改：取消强制迭代次数限制，直接读取配置参数
+            'save_checkpoint_freq': int(c['save_checkpoint_freq']) if int(c['save_checkpoint_freq']) > 0 else 5000,
             'use_tb_logger': True,
             'wandb': {'project': None, 'resume_id': None},
             'training_log_file': str(Path(c['experiments_root']) / 'logs' / 'training.txt'),
@@ -437,6 +438,21 @@ def main():
         return
 
     if args.test:
+        # 已修改：如果未找到指定模型，自动回退到 latest 模型
+        model_path = Path(common['model_path'])
+        if not model_path.exists():
+            latest_model = Path(common['experiments_root']) / 'models' / 'net_g_latest.pth'
+            if latest_model.exists():
+                print(f"警告：未找到 {model_path}，已自动切换使用最新的模型：{latest_model}")
+                model_path = latest_model
+                # 更新 common 中的路径供后续使用
+                common['model_path'] = str(latest_model)
+            else:
+                raise FileNotFoundError(
+                    f'Best model not found: {model_path}, and no latest model found. '
+                    'Run training first.'
+                )
+
         opt = build_test_options(common)
         ensure_log_dir(common, opt)
         temp_yaml = write_temp_yaml(opt, 'hat_test_')

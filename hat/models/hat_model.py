@@ -16,6 +16,26 @@ from pathlib import Path
 from basicsr.utils import get_root_logger
 from hat.utils.metric_utils import ensure_gray_uint8, psnr_uint8, ssim_uint8
 
+
+def _resolve_validation_log_file(opt):
+    logger_cfg = opt.get('logger', {}) if isinstance(opt, dict) else {}
+    if isinstance(logger_cfg, dict):
+        log_file = logger_cfg.get('validation_log_file')
+        if log_file:
+            return log_file
+
+    path_cfg = opt.get('path', {}) if isinstance(opt, dict) else {}
+    if isinstance(path_cfg, dict):
+        old_value = path_cfg.get('validation_log')
+        if not old_value:
+            return None
+        # Backward-compatible: if a directory path is provided, write validation.txt under it.
+        if str(old_value).lower().endswith('.txt'):
+            return old_value
+        return osp.join(old_value, 'validation.txt')
+
+    return None
+
 @MODEL_REGISTRY.register()
 class HATModel(SRModel):
 
@@ -270,7 +290,7 @@ class HATModel(SRModel):
                     json.dump(meta, f)
                 logger = get_root_logger()
                 logger.info(f'Best model updated: {save_path} (psnr={cur:.6f})')
-                validation_log = path_cfg.get('validation_log') if isinstance(path_cfg, dict) else None
+                validation_log = _resolve_validation_log_file(self.opt)
                 if validation_log:
                     try:
                         with open(validation_log, 'a', encoding='utf-8') as f:
@@ -287,8 +307,7 @@ class HATModel(SRModel):
         except Exception:
             pass
 
-        path_cfg = self.opt.get('path', {}) if isinstance(self.opt.get('path', {}), dict) else {}
-        validation_log = path_cfg.get('validation_log') if isinstance(path_cfg, dict) else None
+        validation_log = _resolve_validation_log_file(self.opt)
         if not validation_log:
             return
 

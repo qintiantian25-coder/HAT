@@ -234,8 +234,6 @@ def build_train_options(c):
             'experiments_root': c['experiments_root'],
             'models': str(Path(c['experiments_root']) / 'models'),
             'visualization': str(Path(c['experiments_root']) / 'visualization'),
-            'training_log': str(Path(c['experiments_root']) / 'logs' / 'training.txt'),
-            'validation_log': str(Path(c['experiments_root']) / 'logs' / 'validation.txt'),
         },
         'train': {
             'gradient_accumulation_steps': c['gradient_accumulation_steps'],
@@ -274,6 +272,8 @@ def build_train_options(c):
             'save_checkpoint_freq': 0,
             'use_tb_logger': True,
             'wandb': {'project': None, 'resume_id': None},
+            'training_log_file': str(Path(c['experiments_root']) / 'logs' / 'training.txt'),
+            'validation_log_file': str(Path(c['experiments_root']) / 'logs' / 'validation.txt'),
         },
     }
 
@@ -320,7 +320,6 @@ def build_test_options(c):
             'strict_load_g': False,
             'param_key_g': None,
             'visualization': str(Path(c['experiments_root']) / 'visualization'),
-            'validation_log': str(Path(c['experiments_root']) / 'logs' / 'validation.txt'),
         },
         'val': {
             'suffix': c['suffix'],
@@ -334,6 +333,7 @@ def build_test_options(c):
         'logger': {
             'print_freq': 100,
             'use_tb_logger': False,
+            'validation_log_file': str(Path(c['experiments_root']) / 'logs' / 'validation.txt'),
         },
     }
 
@@ -347,10 +347,21 @@ def write_temp_yaml(opt_dict, prefix):
     return tmp.name
 
 
-def ensure_log_dir(c):
-    log_dir = Path(c['experiments_root']) / 'logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    return log_dir
+def ensure_log_dir(c, opt=None):
+    log_dirs = {Path(c['experiments_root']) / 'logs'}
+
+    if isinstance(opt, dict):
+        logger_cfg = opt.get('logger', {})
+        if isinstance(logger_cfg, dict):
+            for key in ('training_log_file', 'validation_log_file'):
+                log_file = logger_cfg.get(key)
+                if log_file:
+                    log_dirs.add(Path(log_file).parent)
+
+    for log_dir in log_dirs:
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+    return Path(c['experiments_root']) / 'logs'
 
 
 def tee_subprocess(command, log_file, cwd=ROOT):
@@ -398,18 +409,19 @@ def main():
 
     cfg = parse_cfg(args.config_path)
     common = build_common(cfg)
-    ensure_log_dir(common)
 
     if args.train:
         opt = build_train_options(common)
+        ensure_log_dir(common, opt)
         temp_yaml = write_temp_yaml(opt, 'hat_train_')
         print(f'Training config written to: {temp_yaml}')
         print(f'Best model will be saved under: {Path(common["experiments_root"]) / "models"}')
-        tee_subprocess([sys.executable, 'hat/train.py', '-opt', temp_yaml], Path(common['experiments_root']) / 'logs' / 'training.txt')
+        run_command([sys.executable, 'hat/train.py', '-opt', temp_yaml])
         return
 
     if args.test:
         opt = build_test_options(common)
+        ensure_log_dir(common, opt)
         temp_yaml = write_temp_yaml(opt, 'hat_test_')
         print(f'Test config written to: {temp_yaml}')
         run_command([sys.executable, 'hat/test.py', '-opt', temp_yaml])

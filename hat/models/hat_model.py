@@ -3,7 +3,6 @@ from torch.nn import functional as F
 import os
 from basicsr.utils.registry import MODEL_REGISTRY
 from basicsr.models.sr_model import SRModel
-from basicsr.metrics import calculate_metric
 from basicsr.utils import imwrite, tensor2img
 
 import math
@@ -12,6 +11,10 @@ from tqdm import tqdm
 from os import path as osp
 import json
 import time
+from pathlib import Path
+
+from basicsr.utils import get_root_logger
+from hat.utils.metric_utils import ensure_gray_uint8, psnr_uint8, ssim_uint8
 
 @MODEL_REGISTRY.register()
 class HATModel(SRModel):
@@ -128,12 +131,16 @@ class HATModel(SRModel):
         if with_metrics:
             self.metric_results = {metric: 0 for metric in self.metric_results}
 
-        metric_data = dict()
         if use_pbar:
             pbar = tqdm(total=len(dataloader), unit='image')
 
         for idx, val_data in enumerate(dataloader):
-            img_name = osp.splitext(osp.basename(val_data['lq_path'][0]))[0]
+            lq_path = val_data['lq_path'][0]
+            dataset_root = dataloader.dataset.opt.get('dataroot_lq')
+            if dataset_root:
+                img_name = osp.splitext(osp.relpath(lq_path, dataset_root))[0]
+            else:
+                img_name = osp.splitext(osp.basename(lq_path))[0]
             self.feed_data(val_data)
 
             self.pre_process()
@@ -145,11 +152,12 @@ class HATModel(SRModel):
 
             visuals = self.get_current_visuals()
             sr_img = tensor2img([visuals['result']])
-            metric_data['img'] = sr_img
             if 'gt' in visuals:
                 gt_img = tensor2img([visuals['gt']])
-                metric_data['img2'] = gt_img
                 del self.gt
+
+                sr_gray = ensure_gray_uint8(sr_img)
+                gt_gray = ensure_gray_uint8(gt_img)
 
             # tentative for out of GPU memory
             del self.lq
@@ -167,12 +175,21 @@ class HATModel(SRModel):
                     else:
                         save_img_path = osp.join(self.opt['path']['visualization'], dataset_name,
                                                  f'{img_name}_{self.opt["name"]}.png')
+                os.makedirs(osp.dirname(save_img_path), exist_ok=True)
                 imwrite(sr_img, save_img_path)
 
             if with_metrics:
                 # calculate metrics
                 for name, opt_ in self.opt['val']['metrics'].items():
-                    self.metric_results[name] += calculate_metric(metric_data, opt_)
+                    metric_type = str(opt_.get('type', '')).lower()
+                    crop_border = int(opt_.get('crop_border', 0))
+                    if metric_type == 'calculate_psnr':
+                        self.metric_results[name] += psnr_uint8(gt_gray, sr_gray, crop_border)
+                    elif metric_type == 'calculate_ssim':
+                        ssim_val = ssim_uint8(gt_gray, sr_gray, crop_border)
+                        self.metric_results[name] += 0.0 if ssim_val is None else ssim_val
+                    else:
+                        raise NotImplementedError(f'Unsupported validation metric: {metric_type}')
             if use_pbar:
                 pbar.update(1)
                 pbar.set_description(f'Test {img_name}')
@@ -213,8 +230,11 @@ class HATModel(SRModel):
             exp_root = path_cfg.get('experiments_root') or path_cfg.get('root')
         if not exp_root:
             exp_root = osp.join(os.getcwd(), 'experiments')
-        exp_name = self.opt.get('name', 'experiment')
-        models_dir = osp.join(exp_root, exp_name, 'models')
+        models_dir = None
+        if isinstance(path_cfg, dict):
+            models_dir = path_cfg.get('models')
+        if not models_dir:
+            models_dir = osp.join(exp_root, 'models')
         try:
             os.makedirs(models_dir, exist_ok=True)
         except Exception:
@@ -248,9 +268,44 @@ class HATModel(SRModel):
                 meta = {'best_psnr': cur, 'iter': int(current_iter), 'time': time.time()}
                 with open(meta_file, 'w', encoding='utf-8') as f:
                     json.dump(meta, f)
-                print(f'===> Best model updated: {save_path} (psnr={cur:.6f})')
+                logger = get_root_logger()
+                logger.info(f'Best model updated: {save_path} (psnr={cur:.6f})')
+                validation_log = path_cfg.get('validation_log') if isinstance(path_cfg, dict) else None
+                if validation_log:
+                    try:
+                        with open(validation_log, 'a', encoding='utf-8') as f:
+                            f.write(f'iter={current_iter} best_model_updated psnr={cur:.6f} path={save_path}\n')
+                    except Exception:
+                        pass
             except Exception as e:
-                print('Failed to save best model:', e)
+                logger = get_root_logger()
+                logger.error(f'Failed to save best model: {e}')
+
+    def _log_validation_metric_values(self, current_iter, dataset_name, tb_logger):
+        try:
+            super(HATModel, self)._log_validation_metric_values(current_iter, dataset_name, tb_logger)
+        except Exception:
+            pass
+
+        path_cfg = self.opt.get('path', {}) if isinstance(self.opt.get('path', {}), dict) else {}
+        validation_log = path_cfg.get('validation_log') if isinstance(path_cfg, dict) else None
+        if not validation_log:
+            return
+
+        try:
+            log_dir = Path(validation_log).parent
+            log_dir.mkdir(parents=True, exist_ok=True)
+            metric_parts = []
+            for key, value in getattr(self, 'metric_results', {}).items():
+                try:
+                    metric_parts.append(f'{key}={float(value):.6f}')
+                except Exception:
+                    metric_parts.append(f'{key}={value}')
+            line = f'iter={current_iter} dataset={dataset_name} ' + ' '.join(metric_parts) + '\n'
+            with open(validation_log, 'a', encoding='utf-8') as f:
+                f.write(line)
+        except Exception:
+            pass
 
     def optimize_parameters(self, current_iter):
         """Override to add debugging before calling base implementation.

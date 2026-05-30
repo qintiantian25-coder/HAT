@@ -117,3 +117,13 @@ The inference results on benchmark datasets are available at
 
 ## Contact
 If you have any question, please email chxy95@gmail.com or join in the [Wechat group of BasicSR](https://github.com/XPixelGroup/BasicSR#-contact) to discuss with the authors.
+
+## Blind Restoration Quick Start
+Use the unified entrypoint for the blind-pixel restoration task:
+
+```bash
+python main.py --train --config_path ./experiment.cfg
+python main.py --test --config_path ./experiment.cfg
+```
+
+The config in `experiment.cfg` is set up for the grouped grayscale dataset layout under `/home/student_server/Qtt/NAFNet/data_new`.

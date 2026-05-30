@@ -13,6 +13,11 @@
 - 测试时输出 PSNR、SSIM、blind_mae、blind_rmse、blind_psnr 等指标。
 - 所有模型、日志、验证输出和测试结果都保存在当前项目目录下的 experiments 目录中，只有数据集路径使用绝对地址。
 
+### 1.1 环境兼容说明
+
+- 当前项目通过 [sitecustomize.py](sitecustomize.py) 自动兼容较新的 `torchvision`，使旧版 `basicsr` 里的 `functional_tensor` 导入仍然可用。
+- 因此在这个仓库根目录下运行训练/测试时，通常不需要手动修改 `basicsr` 源码或降级 `torchvision`。
+
 ## 2. 主要文件说明
 
 下面列出本任务真正会用到的核心文件。

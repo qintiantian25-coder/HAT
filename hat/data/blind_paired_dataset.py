@@ -1,5 +1,6 @@
 import os
 import os.path as osp
+import re
 
 import numpy as np
 from torch.utils import data as data
@@ -11,7 +12,6 @@ from basicsr.utils.registry import DATASET_REGISTRY
 
 
 def natural_sort_key(s):
-    import re
     return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
 
 

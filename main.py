@@ -110,13 +110,13 @@ def build_common(cfg):
     paths = get_section(cfg, 'paths')
     train_sec = get_section(cfg, 'train')
     test_sec = get_section(cfg, 'test')
+    val_sec = get_section(cfg, 'val')
     logger_sec = get_section(cfg, 'logger')
 
     dataset_root = common.get('dataset_root', '/home/student_server/Qtt/NAFNet/data_new')
     exp_root = common.get('experiments_root', './experiments')
     name = common.get('name', 'train_HAT_blind_restoration')
     model_path = common.get('model_path', str(Path(exp_root) / 'models' / 'best_model.pt'))
-    test_mask_root = test_sec.get('test_mask_root', os.path.join(dataset_root, 'test_mask'))
 
     return {
         'name': name,
@@ -127,11 +127,10 @@ def build_common(cfg):
         'train_sharp': paths.get('train_sharp', paths.get('train_gt', os.path.join(dataset_root, 'train_sharp'))),
         'val_blur': paths.get('val_blur', paths.get('val_lq', os.path.join(dataset_root, 'val_blur'))),
         'val_sharp': paths.get('val_sharp', paths.get('val_gt', os.path.join(dataset_root, 'val_sharp'))),
+        'val_mask_root': val_sec.get('val_mask_root', paths.get('val_mask', os.path.join(dataset_root, 'val_mask'))),
         'test_blur': paths.get('test_blur', os.path.join(dataset_root, 'test_blur')),
         'test_sharp': paths.get('test_sharp', os.path.join(dataset_root, 'test_sharp')),
-        'train_mask': paths.get('train_mask', os.path.join(dataset_root, 'train_mask')),
-        'val_mask': paths.get('val_mask', os.path.join(dataset_root, 'val_mask')),
-        'test_mask_root': test_mask_root,
+        'test_mask_root': paths.get('test_mask', os.path.join(dataset_root, 'test_mask')),
         'num_gpu': as_int(common.get('num_gpu'), 1),
         'scale': as_int(common.get('scale'), 1),
         'in_chans': as_int(common.get('in_chans'), 1),
@@ -156,8 +155,7 @@ def build_common(cfg):
         'weight_decay': as_float(train_sec.get('weight_decay'), 1e-4),
         'milestones': as_list(train_sec.get('milestones'), ['75000', '120000', '135000', '145000']),
         'gamma': as_float(train_sec.get('gamma'), 0.5),
-        'val_freq_epochs': as_int(common.get('val_freq_epochs') or train_sec.get('val_freq_epochs'), 20),
-        'val_freq_raw': as_int(train_sec.get('val_freq'), 5000),
+        'val_freq_epochs': as_int(train_sec.get('val_freq_epochs'), 20),
         'save_checkpoint_freq': as_int(logger_sec.get('save_checkpoint_freq'), as_int(train_sec.get('save_checkpoint_freq'), 0)),
         'pretrain_network_g': common.get('pretrain_network_g', ''),
     }
@@ -166,7 +164,7 @@ def build_common(cfg):
 def estimate_val_freq_iters(c):
     train_image_count = count_pngs(c['train_blur'])
     if train_image_count <= 0:
-        return c['val_freq_raw']
+        return 5000  # fallback when image count unknown
 
     effective_batch = max(1, c['batch_size_per_gpu'] * c['num_gpu'])
     iters_per_epoch = max(1, math.ceil(train_image_count / effective_batch))
@@ -175,6 +173,35 @@ def estimate_val_freq_iters(c):
 
 def build_train_options(c):
     val_freq_iters = estimate_val_freq_iters(c)
+
+    train_dataset = {
+        'name': 'BlindDataset',
+        'type': 'BlindPairedImageDataset',
+        'dataroot_gt': c['train_sharp'],
+        'dataroot_lq': c['train_blur'],
+        'io_backend': {'type': 'disk'},
+        'phase': 'train',
+        'gt_size': c['gt_size'],
+        'use_hflip': True,
+        'use_rot': True,
+        'num_worker_per_gpu': c['num_worker_per_gpu'],
+        'batch_size_per_gpu': c['batch_size_per_gpu'],
+        'dataset_enlarge_ratio': 1,
+        'prefetch_mode': None,
+        'pin_memory': True,
+        'scale': c['scale'],
+    }
+
+    val_dataset = {
+        'name': 'BlindVal',
+        'type': 'BlindPairedImageDataset',
+        'dataroot_gt': c['val_sharp'],
+        'dataroot_lq': c['val_blur'],
+        'io_backend': {'type': 'disk'},
+        'phase': 'val',
+        'scale': c['scale'],
+    }
+
     return {
         'name': c['name'],
         'model_type': 'HATModel',
@@ -182,32 +209,8 @@ def build_train_options(c):
         'num_gpu': c['num_gpu'],
         'manual_seed': 0,
         'datasets': {
-            'train': {
-                'name': 'BlindDataset',
-                'type': 'BlindPairedImageDataset',
-                'dataroot_gt': c['train_sharp'],
-                'dataroot_lq': c['train_blur'],
-                'io_backend': {'type': 'disk'},
-                'phase': 'train',
-                'gt_size': c['gt_size'],
-                'use_hflip': True,
-                'use_rot': True,
-                'num_worker_per_gpu': c['num_worker_per_gpu'],
-                'batch_size_per_gpu': c['batch_size_per_gpu'],
-                'dataset_enlarge_ratio': 1,
-                'prefetch_mode': None,
-                'pin_memory': True,
-                'scale': c['scale'],
-            },
-            'val_1': {
-                'name': 'BlindVal',
-                'type': 'BlindPairedImageDataset',
-                'dataroot_gt': c['val_sharp'],
-                'dataroot_lq': c['val_blur'],
-                'io_backend': {'type': 'disk'},
-                'phase': 'val',
-                'scale': c['scale'],
-            },
+            'train': train_dataset,
+            'val_1': val_dataset,
         },
         'network_g': {
             'type': 'HAT',
@@ -264,6 +267,7 @@ def build_train_options(c):
             'val_freq': val_freq_iters,
             'save_img': True,
             'pbar': True,
+            'mask_root': c['val_mask_root'],
             'metrics': {
                 'psnr': {'type': 'calculate_psnr', 'crop_border': 0, 'test_y_channel': False, 'better': 'higher'},
                 'ssim': {'type': 'calculate_ssim', 'crop_border': 0, 'test_y_channel': False, 'better': 'higher'},
@@ -271,7 +275,6 @@ def build_train_options(c):
         },
         'logger': {
             'print_freq': 100,
-            # 已修改：取消强制迭代次数限制，直接读取配置参数
             'save_checkpoint_freq': int(c['save_checkpoint_freq']) if int(c['save_checkpoint_freq']) > 0 else 5000,
             'use_tb_logger': True,
             'wandb': {'project': None, 'resume_id': None},
@@ -438,14 +441,13 @@ def main():
         return
 
     if args.test:
-        # 已修改：如果未找到指定模型，自动回退到 latest 模型
+        # auto-fallback to latest model if best_model.pt not found
         model_path = Path(common['model_path'])
         if not model_path.exists():
             latest_model = Path(common['experiments_root']) / 'models' / 'net_g_latest.pth'
             if latest_model.exists():
-                print(f"警告：未找到 {model_path}，已自动切换使用最新的模型：{latest_model}")
+                print(f"WARNING: {model_path} not found, falling back to latest model: {latest_model}")
                 model_path = latest_model
-                # 更新 common 中的路径供后续使用
                 common['model_path'] = str(latest_model)
             else:
                 raise FileNotFoundError(

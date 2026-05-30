@@ -122,10 +122,10 @@ def build_common(cfg):
         'dataset_root': dataset_root,
         'experiments_root': exp_root,
         'model_path': model_path,
-        'train_blur': paths.get('train_blur', os.path.join(dataset_root, 'train_blur')),
-        'train_sharp': paths.get('train_sharp', os.path.join(dataset_root, 'train_sharp')),
-        'val_blur': paths.get('val_blur', os.path.join(dataset_root, 'val_blur')),
-        'val_sharp': paths.get('val_sharp', os.path.join(dataset_root, 'val_sharp')),
+        'train_blur': paths.get('train_blur', paths.get('train_lq', os.path.join(dataset_root, 'train_blur'))),
+        'train_sharp': paths.get('train_sharp', paths.get('train_gt', os.path.join(dataset_root, 'train_sharp'))),
+        'val_blur': paths.get('val_blur', paths.get('val_lq', os.path.join(dataset_root, 'val_blur'))),
+        'val_sharp': paths.get('val_sharp', paths.get('val_gt', os.path.join(dataset_root, 'val_sharp'))),
         'test_blur': paths.get('test_blur', os.path.join(dataset_root, 'test_blur')),
         'test_sharp': paths.get('test_sharp', os.path.join(dataset_root, 'test_sharp')),
         'train_mask': paths.get('train_mask', os.path.join(dataset_root, 'train_mask')),
@@ -364,6 +364,18 @@ def ensure_log_dir(c, opt=None):
     return Path(c['experiments_root']) / 'logs'
 
 
+def resolve_training_log_file(c, opt=None):
+    default_log = Path(c['experiments_root']) / 'logs' / 'training.txt'
+    if not isinstance(opt, dict):
+        return default_log
+    logger_cfg = opt.get('logger', {})
+    if isinstance(logger_cfg, dict):
+        path = logger_cfg.get('training_log_file')
+        if path:
+            return Path(path)
+    return default_log
+
+
 def tee_subprocess(command, log_file, cwd=ROOT):
     env = os.environ.copy()
     env['PYTHONPATH'] = str(ROOT) + os.pathsep + env.get('PYTHONPATH', '')
@@ -416,7 +428,10 @@ def main():
         temp_yaml = write_temp_yaml(opt, 'hat_train_')
         print(f'Training config written to: {temp_yaml}')
         print(f'Best model will be saved under: {Path(common["experiments_root"]) / "models"}')
-        run_command([sys.executable, 'hat/train.py', '-opt', temp_yaml])
+        tee_subprocess(
+            [sys.executable, 'hat/train.py', '-opt', temp_yaml],
+            resolve_training_log_file(common, opt)
+        )
         return
 
     if args.test:

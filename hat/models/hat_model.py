@@ -307,6 +307,19 @@ class HATModel(SRModel):
         except Exception:
             pass
 
+        try:
+            logger = get_root_logger()
+            metric_parts = []
+            for key, value in getattr(self, 'metric_results', {}).items():
+                try:
+                    metric_parts.append(f'{key}={float(value):.6f}')
+                except Exception:
+                    metric_parts.append(f'{key}={value}')
+            if metric_parts:
+                logger.info(f'Validation iter={current_iter} dataset={dataset_name} ' + ' '.join(metric_parts))
+        except Exception:
+            pass
+
         validation_log = _resolve_validation_log_file(self.opt)
         if not validation_log:
             return

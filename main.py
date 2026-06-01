@@ -325,6 +325,7 @@ def build_test_options(c):
             'pretrain_network_g': c['model_path'],
             'strict_load_g': False,
             'param_key_g': None,
+            'results_root': str(Path(c['experiments_root'])),
             'visualization': str(Path(c['experiments_root']) / 'visualization'),
         },
         'val': {

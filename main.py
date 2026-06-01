@@ -469,6 +469,7 @@ def main():
             '--input_dir', common['test_blur'],
             '--mask_root', common['test_mask_root'],
             '--save_dir', common['save_blind_eval_dir'],
+            '--save_triple',
         ]
         run_command(eval_cmd)
 

@@ -325,7 +325,6 @@ def build_test_options(c):
             'pretrain_network_g': c['model_path'],
             'strict_load_g': False,
             'param_key_g': None,
-            'results_root': str(Path(c['experiments_root'])),
             'visualization': str(Path(c['experiments_root']) / 'visualization'),
         },
         'val': {
@@ -462,7 +461,7 @@ def main():
         print(f'Test config written to: {temp_yaml}')
         run_command([sys.executable, 'hat/test.py', '-opt', temp_yaml])
 
-        out_dir = Path(common['experiments_root']) / 'visualization' / common['test_dataset_name']
+        out_dir = Path('results') / common['name'] / 'visualization' / common['test_dataset_name']
         eval_cmd = [
             sys.executable, 'tools/evaluate_blind.py',
             '--out_dir', str(out_dir),

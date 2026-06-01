@@ -110,7 +110,7 @@ def find_flash_csv(mask_root, rel_path):
 
 
 def evaluate(out_dir, gt_dir, input_dir=None, mask_csv=None, mask_root=None,
-             save_dir=None, save_triple=False):
+             save_dir=None, save_triple=False, write_split_csv=True, write_summary_csv=True):
     out_files = []
     for root, _, files in os.walk(out_dir):
         for file_name in files:
@@ -379,6 +379,38 @@ def evaluate(out_dir, gt_dir, input_dir=None, mask_csv=None, mask_root=None,
                 writer.writerow(row)
         print(f'Per-seq summary saved to: {summary_csv}')
 
+    # --- Save per-seq split CSVs (one per group) ---
+    if write_split_csv and per_image_logs:
+        seq_groups = {}
+        for row in per_image_logs:
+            seq = row.get('seq', '') or 'root'
+            seq_groups.setdefault(seq, []).append(row)
+
+        for seq_name in sorted(seq_groups.keys(), key=natural_sort_key):
+            seq_rows = seq_groups[seq_name]
+            if not seq_rows:
+                continue
+            seq_label = seq_name if seq_name != 'root' else 'root'
+            seq_csv = os.path.join(save_dir, f'test_blind_metrics_{seq_label}.csv')
+            with open(seq_csv, 'w', encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=keys)
+                writer.writeheader()
+                for row in seq_rows:
+                    writer.writerow(row)
+            print(f'Per-seq metrics saved to: {seq_csv}')
+
+    # --- Aggregate PSNR/SSIM summary ---
+    psnr_vals = [r['psnr'] for r in per_image_logs if r.get('psnr') is not None]
+    ssim_vals = [r['ssim'] for r in per_image_logs if r.get('ssim') is not None]
+    if psnr_vals or ssim_vals:
+        print('===> Aggregate Full-Image Metrics')
+        if psnr_vals:
+            avg_psnr = sum(psnr_vals) / len(psnr_vals)
+            print(f'Average PSNR: {avg_psnr:.4f} ({len(psnr_vals)} images)')
+        if ssim_vals:
+            avg_ssim = sum(ssim_vals) / len(ssim_vals)
+            print(f'Average SSIM: {avg_ssim:.4f} ({len(ssim_vals)} images)')
+
     # --- Console summary ---
     if blind_pix_sum > 0:
         blind_mae = blind_abs_sum / blind_pix_sum
@@ -415,10 +447,16 @@ def main():
     parser.add_argument('--save_dir', default=None, help='Directory to save per-image metrics CSV')
     parser.add_argument('--save_triple', action='store_true', default=None,
                         help='Save triple comparison [input|output|GT] images')
+    parser.add_argument('--no_split_csv', action='store_true', default=False,
+                        help='Disable per-seq split CSV files')
+    parser.add_argument('--no_summary_csv', action='store_true', default=False,
+                        help='Disable per-seq summary CSV file')
     args = parser.parse_args()
 
     evaluate(args.out_dir, args.gt_dir, args.input_dir, args.mask_csv, args.mask_root,
-             args.save_dir, args.save_triple)
+             args.save_dir, args.save_triple,
+             write_split_csv=not args.no_split_csv,
+             write_summary_csv=not args.no_summary_csv)
 
 
 if __name__ == '__main__':

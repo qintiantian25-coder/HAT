@@ -110,7 +110,8 @@ def find_flash_csv(mask_root, rel_path):
 
 
 def evaluate(out_dir, gt_dir, input_dir=None, mask_csv=None, mask_root=None,
-             save_dir=None, save_triple=False, write_split_csv=True, write_summary_csv=True):
+             save_dir=None, save_triple=False, write_split_csv=True, write_summary_csv=True,
+             group_hint=None):
     out_files = []
     for root, _, files in os.walk(out_dir):
         for file_name in files:
@@ -165,6 +166,9 @@ def evaluate(out_dir, gt_dir, input_dir=None, mask_csv=None, mask_root=None,
         seq_name = rel_path.split(os.sep)[0] if os.sep in rel_path else ''
 
         gt_path = gt_map.get(rel_path) or gt_map.get(os.path.basename(rel_path))
+        if group_hint and not gt_path:
+            # Fallback: try matching with group prefix (for per-group eval)
+            gt_path = gt_map.get(f"{group_hint}/{rel_path}") or gt_map.get(f"{group_hint}/{os.path.basename(rel_path)}")
         if not gt_path or not os.path.exists(out_path):
             continue
 
@@ -178,6 +182,8 @@ def evaluate(out_dir, gt_dir, input_dir=None, mask_csv=None, mask_root=None,
         # --- Triple comparison ---
         if save_triple and save_dir and input_dir:
             in_path = input_map.get(rel_path) or input_map.get(img_name)
+            if group_hint and not in_path:
+                in_path = input_map.get(f"{group_hint}/{rel_path}") or input_map.get(f"{group_hint}/{img_name}")
             if in_path and os.path.exists(in_path):
                 in_img = cv2.imread(in_path, cv2.IMREAD_GRAYSCALE)
                 if in_img is not None:
@@ -274,6 +280,8 @@ def evaluate(out_dir, gt_dir, input_dir=None, mask_csv=None, mask_root=None,
 
                 # Input blind error
                 in_path = input_map.get(rel_path) or input_map.get(img_name)
+                if group_hint and not in_path:
+                    in_path = input_map.get(f"{group_hint}/{rel_path}") or input_map.get(f"{group_hint}/{img_name}")
                 in_mae = None
                 if in_path and os.path.exists(in_path):
                     in_img = cv2.imread(in_path, cv2.IMREAD_GRAYSCALE)

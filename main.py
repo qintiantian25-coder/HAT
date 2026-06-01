@@ -417,6 +417,172 @@ def run_command(command, cwd=ROOT):
     subprocess.run(command, cwd=str(cwd), env=env, check=True)
 
 
+def run_test(common):
+    """Direct inference with per-group incremental evaluation.
+
+    Mirror the reference test() flow: inference → save per-group outputs
+    → evaluate each group as soon as its inference completes.
+    Adapted for single-frame HAT model (reference code used sequence model).
+    """
+    import cv2
+    import numpy as np
+    import torch
+    from torch.nn import functional as F
+
+    sys.path.insert(0, str(ROOT))
+
+    from basicsr.data import build_dataset, build_dataloader
+    from basicsr.models import build_model
+    from basicsr.utils import imwrite, tensor2img
+    from tools.evaluate_blind import evaluate as evaluate_blind_fn
+
+    opt = build_test_options(common)
+    opt['is_train'] = False
+    opt['dist'] = False
+    opt['rank'] = 0
+    opt['world_size'] = 1
+
+    # --- Dataset ---
+    dataset_opt = opt['datasets']['test_1']
+    dataset_opt.setdefault('batch_size_per_gpu', 1)
+    dataset_opt.setdefault('num_worker_per_gpu', 2)
+    test_set = build_dataset(dataset_opt)
+    test_loader = build_dataloader(
+        test_set, dataset_opt, num_gpu=opt['num_gpu'],
+        dist=False, sampler=None, seed=opt['manual_seed'],
+    )
+    print(f'Number of test images: {len(test_set)}')
+
+    # --- Model ---
+    model = build_model(opt)
+    net = model.net_g
+    net.eval()
+
+    window_size = opt['network_g']['window_size']
+    scale = opt.get('scale', 1)
+
+    save_root = Path(common['experiments_root']) / 'visualization' / common['test_dataset_name']
+    save_triple_root = Path(common['save_blind_eval_dir']) / 'triple_comparison'
+    gt_root = common['test_sharp']
+    input_root = common['test_blur']
+    mask_root = common['test_mask_root']
+    save_eval_dir = common['save_blind_eval_dir']
+
+    # --- GT finder maps (filename → abs_path, rel_path → abs_path) ---
+    gt_rel_finder = {}
+    for root, _, files in os.walk(gt_root):
+        for f in files:
+            if f.lower().endswith('.png'):
+                p = os.path.join(root, f)
+                rel = os.path.relpath(p, gt_root).replace('\\', '/')
+                gt_rel_finder[rel] = p
+
+    current_group = None
+
+    print('===> 开始精准推理与可视化...')
+
+    with torch.no_grad():
+        for idx, val_data in enumerate(test_loader):
+            lq = val_data['lq'].cuda()
+            gt = val_data['gt'].cuda()
+            lq_path = val_data['lq_path'][0]
+
+            rel_path = os.path.relpath(lq_path, input_root).replace('\\', '/')
+            seq_name = rel_path.split('/')[0]  # e.g. '001'
+            img_name = os.path.basename(rel_path)
+
+            # --- Group boundary → per-group evaluation ---
+            if current_group is not None and seq_name != current_group:
+                print(f'===> 子文件夹 {current_group} 推理完成，开始生成该子文件夹 CSV...')
+                group_out_dir = save_root / current_group
+                if group_out_dir.is_dir():
+                    evaluate_blind_fn(
+                        out_dir=str(group_out_dir),
+                        gt_dir=gt_root,
+                        input_dir=input_root,
+                        mask_root=mask_root,
+                        save_dir=str(Path(save_eval_dir) / current_group),
+                        save_triple=False,
+                        write_split_csv=False,
+                        write_summary_csv=False,
+                        group_hint=current_group,
+                    )
+            current_group = seq_name
+
+            # --- Window-aligned padding ---
+            _, _, h, w = lq.size()
+            mod_pad_h = (window_size - h % window_size) % window_size
+            mod_pad_w = (window_size - w % window_size) % window_size
+            lq_padded = F.pad(lq, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
+
+            # --- Forward pass ---
+            output_padded = net(lq_padded)
+
+            # --- Unpad ---
+            output = output_padded[:, :, :h * scale, :w * scale]
+
+            # --- Save pure output (grouped subdirectory) ---
+            pure_dir = save_root / seq_name
+            pure_dir.mkdir(parents=True, exist_ok=True)
+            sr_img = tensor2img([output])
+            imwrite(sr_img, str(pure_dir / img_name))
+
+            # --- Save triple comparison [input | output | GT] ---
+            gt_path = gt_rel_finder.get(rel_path) or gt_rel_finder.get(img_name)
+            if gt_path:
+                gt_img = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
+                if gt_img is not None:
+                    lq_display = tensor2img([lq[:, :, :h, :w]])
+
+                    if sr_img.shape != gt_img.shape:
+                        sr_resized = cv2.resize(sr_img, (gt_img.shape[1], gt_img.shape[0]))
+                    else:
+                        sr_resized = sr_img
+
+                    if lq_display.shape != gt_img.shape:
+                        lq_display = cv2.resize(lq_display, (gt_img.shape[1], gt_img.shape[0]))
+
+                    sep = np.full((gt_img.shape[0], 2), 255, dtype=np.uint8)
+                    triple = np.hstack([lq_display, sep, sr_resized, sep, gt_img])
+
+                    triple_dir = save_triple_root / seq_name
+                    triple_dir.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(str(triple_dir / f'triple_{img_name}'), triple)
+
+            if (idx + 1) % 10 == 0:
+                print(f'进度: {idx + 1}/{len(test_loader)} | 正在保存: {img_name}')
+
+    # --- Final group ---
+    if current_group is not None:
+        print(f'===> 子文件夹 {current_group} 推理完成，开始生成该子文件夹 CSV...')
+        group_out_dir = save_root / current_group
+        if group_out_dir.is_dir():
+            evaluate_blind_fn(
+                out_dir=str(group_out_dir),
+                gt_dir=gt_root,
+                input_dir=input_root,
+                mask_root=mask_root,
+                save_dir=str(Path(save_eval_dir) / current_group),
+                save_triple=False,
+                write_split_csv=False,
+                write_summary_csv=False,
+                group_hint=current_group,
+            )
+
+    # --- Final comprehensive evaluation (all groups combined) ---
+    print(f'===> 开始定量打分，准备比对...')
+    evaluate_blind_fn(
+        out_dir=str(save_root),
+        gt_dir=gt_root,
+        input_dir=input_root,
+        mask_root=mask_root,
+        save_dir=save_eval_dir,
+        save_triple=False,  # already saved during inference
+        write_split_csv=True,
+        write_summary_csv=True,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -455,23 +621,8 @@ def main():
                     'Run training first.'
                 )
 
-        opt = build_test_options(common)
-        ensure_log_dir(common, opt)
-        temp_yaml = write_temp_yaml(opt, 'hat_test_')
-        print(f'Test config written to: {temp_yaml}')
-        run_command([sys.executable, 'hat/test.py', '-opt', temp_yaml])
-
-        out_dir = Path('results') / common['name'] / 'visualization' / common['test_dataset_name']
-        eval_cmd = [
-            sys.executable, 'tools/evaluate_blind.py',
-            '--out_dir', str(out_dir),
-            '--gt_dir', common['test_sharp'],
-            '--input_dir', common['test_blur'],
-            '--mask_root', common['test_mask_root'],
-            '--save_dir', common['save_blind_eval_dir'],
-            '--save_triple',
-        ]
-        run_command(eval_cmd)
+        ensure_log_dir(common)
+        run_test(common)
 
 
 if __name__ == '__main__':
